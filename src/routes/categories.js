@@ -5,7 +5,8 @@ const {
   getCategories,
   getCategorieById,
   updateCategorie,
-  toggleArchiveCategorie,
+  archiveCategorie,
+  unarchiveCategorie,
   deleteCategorie
 } = require('../controllers/categorieController');
 const { authenticate, isGestionnaire } = require('../middleware/auth');
@@ -83,7 +84,8 @@ router.put('/:id', authenticate, isGestionnaire, [
   body('description').optional().isString()
 ], updateCategorie);
 
-router.patch('/:id/archive', authenticate, isGestionnaire, toggleArchiveCategorie);
+router.patch('/:id/archive', authenticate, isGestionnaire, archiveCategorie);
+router.patch('/:id/unarchive', authenticate, isGestionnaire, unarchiveCategorie);
 
 router.delete('/:id', authenticate, isGestionnaire, deleteCategorie);
 

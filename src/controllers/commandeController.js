@@ -1,7 +1,4 @@
-const Commande = require('../models/Commande');
-const Produit = require('../models/Produit');
-const Fournisseur = require('../models/Fournisseur');
-const Paiement = require('../models/Paiement');
+const { prisma, includes, generateNextNumber } = require('../models');
 const { validationResult } = require('express-validator');
 const { paginer, construireReponsePaginee, estAujourdhui } = require('../utils/helpers');
 
@@ -17,10 +14,12 @@ const createCommande = async (req, res) => {
       });
     }
 
-    const { fournisseur, articles, dateLivraisonPrevue } = req.body;
+    const { fournisseurId, articles, dateLivraisonPrevue } = req.body;
 
     // Vérifier que le fournisseur existe
-    const fournisseurExist = await Fournisseur.findById(fournisseur);
+    const fournisseurExist = await prisma.fournisseur.findUnique({
+      where: { id: fournisseurId }
+    });
     if (!fournisseurExist || fournisseurExist.isArchived) {
       return res.status(400).json({
         success: false,
@@ -33,11 +32,13 @@ const createCommande = async (req, res) => {
     const articlesAvecPrix = [];
 
     for (const article of articles) {
-      const produit = await Produit.findById(article.produit);
+      const produit = await prisma.produit.findUnique({
+        where: { id: article.produitId }
+      });
       if (!produit || produit.isArchived) {
         return res.status(400).json({
           success: false,
-          message: `Produit invalide ou archivé: ${article.produit}`
+          message: `Produit invalide ou archivé: ${article.produitId}`
         });
       }
 
@@ -45,30 +46,30 @@ const createCommande = async (req, res) => {
       montantTotal += sousTotal;
 
       articlesAvecPrix.push({
-        produit: article.produit,
+        produitId: article.produitId,
         quantite: article.quantite,
         prixAchat: article.prixAchat,
         sousTotal
       });
     }
 
-    // Créer la commande
-    const commande = new Commande({
-      fournisseur,
-      articles: articlesAvecPrix,
-      montant: montantTotal,
-      dateLivraisonPrevue,
-      responsableAchat: req.user._id
+    // Générer le numéro de commande
+    const numero = await generateNextNumber('commande', 'CMD');
+
+    // Créer la commande avec les articles
+    const commande = await prisma.commande.create({
+      data: {
+        numero,
+        fournisseurId,
+        montant: montantTotal,
+        dateLivraisonPrevue: new Date(dateLivraisonPrevue),
+        responsableAchatId: req.user.id,
+        articles: {
+          create: articlesAvecPrix
+        }
+      },
+      include: includes.COMMANDE_INCLUDE
     });
-
-    await commande.save();
-
-    // Peupler les données pour la réponse
-    await commande.populate([
-      { path: 'fournisseur', select: 'numero nom' },
-      { path: 'articles.produit', select: 'code designation' },
-      { path: 'responsableAchat', select: 'nom prenom' }
-    ]);
 
     res.status(201).json({
       success: true,
@@ -93,46 +94,61 @@ const getCommandes = async (req, res) => {
       page = 1, 
       limit = 10, 
       statut, 
-      fournisseur, 
+      fournisseurId, 
       dateDebut, 
       dateFin,
-      responsableAchat 
+      responsableAchatId 
     } = req.query;
     const { skip, limit: limitNum } = paginer(page, limit);
 
     // Construire le filtre
-    const filter = {};
-    if (statut) filter.statut = statut;
-    if (fournisseur) filter.fournisseur = fournisseur;
-    if (responsableAchat && req.user.role === 'gestionnaire') {
-      filter.responsableAchat = responsableAchat;
-    } else if (req.user.role === 'responsable_achat') {
-      filter.responsableAchat = req.user._id;
+    const where = {};
+
+    if (statut) {
+      where.statut = statut;
+    }
+
+    if (fournisseurId) {
+      where.fournisseurId = fournisseurId;
+    }
+
+    if (responsableAchatId) {
+      where.responsableAchatId = responsableAchatId;
     }
 
     if (dateDebut || dateFin) {
-      filter.date = {};
-      if (dateDebut) filter.date.$gte = new Date(dateDebut);
-      if (dateFin) filter.date.$lte = new Date(dateFin);
+      where.date = {};
+      if (dateDebut) {
+        where.date.gte = new Date(dateDebut);
+      }
+      if (dateFin) {
+        where.date.lte = new Date(dateFin);
+      }
     }
 
-    const [commandes, total] = await Promise.all([
-      Commande.find(filter)
-        .populate('fournisseur', 'numero nom')
-        .populate('articles.produit', 'code designation')
-        .populate('responsableAchat', 'nom prenom')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limitNum),
-      Commande.countDocuments(filter)
-    ]);
+    // Compter le total
+    const total = await prisma.commande.count({ where });
 
-    const response = construireReponsePaginee(commandes, total, page, limit);
+    // Récupérer les commandes avec pagination
+    const commandes = await prisma.commande.findMany({
+      where,
+      skip,
+      take: limitNum,
+      orderBy: {
+        date: 'desc'
+      },
+      include: includes.COMMANDE_INCLUDE
+    });
+
+    const pagination = construireReponsePaginee(total, page, limitNum);
 
     res.json({
       success: true,
       message: 'Commandes récupérées avec succès',
-      ...response
+      data: {
+        commandes,
+        pagination
+      }
     });
   } catch (error) {
     console.error('Erreur lors de la récupération des commandes:', error);
@@ -148,10 +164,10 @@ const getCommandeById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const commande = await Commande.findById(id)
-      .populate('fournisseur')
-      .populate('articles.produit')
-      .populate('responsableAchat', 'nom prenom email');
+    const commande = await prisma.commande.findUnique({
+      where: { id },
+      include: includes.COMMANDE_INCLUDE
+    });
 
     if (!commande) {
       return res.status(404).json({
@@ -160,28 +176,11 @@ const getCommandeById = async (req, res) => {
       });
     }
 
-    // Vérifier les permissions
-    if (req.user.role === 'responsable_achat' && 
-        commande.responsableAchat._id.toString() !== req.user._id.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: 'Accès refusé à cette commande'
-      });
-    }
-
-    // Récupérer l'historique des paiements
-    const paiements = await Paiement.find({ commande: id })
-      .populate('responsablePaiement', 'nom prenom')
-      .sort({ numeroVersement: 1 });
-
     res.json({
       success: true,
       message: 'Commande récupérée avec succès',
       data: {
-        commande: {
-          ...commande.toObject(),
-          paiements
-        }
+        commande
       }
     });
   } catch (error) {
@@ -193,110 +192,23 @@ const getCommandeById = async (req, res) => {
   }
 };
 
-// Mettre à jour une commande (avant livraison)
-const updateCommande = async (req, res) => {
-  try {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      return res.status(400).json({
-        success: false,
-        message: 'Erreurs de validation',
-        errors: errors.array()
-      });
-    }
-
-    const { id } = req.params;
-    const { articles, dateLivraisonPrevue } = req.body;
-
-    const commande = await Commande.findById(id);
-    if (!commande) {
-      return res.status(404).json({
-        success: false,
-        message: 'Commande non trouvée'
-      });
-    }
-
-    // Vérifier les permissions
-    if (req.user.role === 'responsable_achat' && 
-        commande.responsableAchat.toString() !== req.user._id.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: 'Accès refusé à cette commande'
-      });
-    }
-
-    // Seules les commandes en cours peuvent être modifiées
-    if (commande.statut !== 'en_cours') {
-      return res.status(400).json({
-        success: false,
-        message: 'Seules les commandes en cours peuvent être modifiées'
-      });
-    }
-
-    // Recalculer le montant si les articles sont modifiés
-    if (articles) {
-      let montantTotal = 0;
-      const articlesAvecPrix = [];
-
-      for (const article of articles) {
-        const produit = await Produit.findById(article.produit);
-        if (!produit || produit.isArchived) {
-          return res.status(400).json({
-            success: false,
-            message: `Produit invalide ou archivé: ${article.produit}`
-          });
-        }
-
-        const sousTotal = article.quantite * article.prixAchat;
-        montantTotal += sousTotal;
-
-        articlesAvecPrix.push({
-          produit: article.produit,
-          quantite: article.quantite,
-          prixAchat: article.prixAchat,
-          sousTotal
-        });
-      }
-
-      commande.articles = articlesAvecPrix;
-      commande.montant = montantTotal;
-    }
-
-    if (dateLivraisonPrevue) {
-      commande.dateLivraisonPrevue = dateLivraisonPrevue;
-    }
-
-    await commande.save();
-
-    await commande.populate([
-      { path: 'fournisseur', select: 'numero nom' },
-      { path: 'articles.produit', select: 'code designation' },
-      { path: 'responsableAchat', select: 'nom prenom' }
-    ]);
-
-    res.json({
-      success: true,
-      message: 'Commande mise à jour avec succès',
-      data: {
-        commande
-      }
-    });
-  } catch (error) {
-    console.error('Erreur lors de la mise à jour de la commande:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Erreur interne du serveur'
-    });
-  }
-};
-
 // Marquer une commande comme livrée
 const marquerLivree = async (req, res) => {
   try {
     const { id } = req.params;
-    const { dateLivraisonReelle } = req.body;
 
-    const commande = await Commande.findById(id);
+    // Vérifier que la commande existe
+    const commande = await prisma.commande.findUnique({
+      where: { id },
+      include: {
+        articles: {
+          include: {
+            produit: true
+          }
+        }
+      }
+    });
+
     if (!commande) {
       return res.status(404).json({
         success: false,
@@ -304,35 +216,44 @@ const marquerLivree = async (req, res) => {
       });
     }
 
-    if (commande.statut !== 'en_cours') {
+    if (commande.statut !== 'EN_COURS') {
       return res.status(400).json({
         success: false,
         message: 'Seules les commandes en cours peuvent être marquées comme livrées'
       });
     }
 
-    commande.statut = 'livre';
-    commande.dateLivraisonReelle = dateLivraisonReelle || new Date();
-
-    // Mettre à jour le stock des produits
+    // Mettre à jour les stocks des produits
     for (const article of commande.articles) {
-      await Produit.findByIdAndUpdate(
-        article.produit,
-        { $inc: { quantiteStock: article.quantite } }
-      );
+      await prisma.produit.update({
+        where: { id: article.produitId },
+        data: {
+          quantiteStock: {
+            increment: article.quantite
+          }
+        }
+      });
     }
 
-    await commande.save();
+    // Marquer la commande comme livrée
+    const commandeLivree = await prisma.commande.update({
+      where: { id },
+      data: {
+        statut: 'LIVRE',
+        dateLivraisonReelle: new Date()
+      },
+      include: includes.COMMANDE_INCLUDE
+    });
 
     res.json({
       success: true,
       message: 'Commande marquée comme livrée avec succès',
       data: {
-        commande
+        commande: commandeLivree
       }
     });
   } catch (error) {
-    console.error('Erreur lors du marquage de livraison:', error);
+    console.error('Erreur lors de la livraison de la commande:', error);
     res.status(500).json({
       success: false,
       message: 'Erreur interne du serveur'
@@ -344,9 +265,11 @@ const marquerLivree = async (req, res) => {
 const annulerCommande = async (req, res) => {
   try {
     const { id } = req.params;
-    const { motif } = req.body;
 
-    const commande = await Commande.findById(id);
+    const commande = await prisma.commande.findUnique({
+      where: { id }
+    });
+
     if (!commande) {
       return res.status(404).json({
         success: false,
@@ -354,34 +277,26 @@ const annulerCommande = async (req, res) => {
       });
     }
 
-    // Vérifier les permissions
-    if (req.user.role === 'responsable_achat' && 
-        commande.responsableAchat.toString() !== req.user._id.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: 'Accès refusé à cette commande'
-      });
-    }
-
-    if (commande.statut === 'paye' || commande.statut === 'annule') {
+    if (commande.statut !== 'EN_COURS') {
       return res.status(400).json({
         success: false,
-        message: 'Cette commande ne peut pas être annulée'
+        message: 'Seules les commandes en cours peuvent être annulées'
       });
     }
 
-    commande.statut = 'annule';
-    if (motif) {
-      commande.motifAnnulation = motif;
-    }
-
-    await commande.save();
+    const commandeAnnulee = await prisma.commande.update({
+      where: { id },
+      data: {
+        statut: 'ANNULE'
+      },
+      include: includes.COMMANDE_INCLUDE
+    });
 
     res.json({
       success: true,
       message: 'Commande annulée avec succès',
       data: {
-        commande
+        commande: commandeAnnulee
       }
     });
   } catch (error) {
@@ -397,68 +312,49 @@ const annulerCommande = async (req, res) => {
 const getStatistiques = async (req, res) => {
   try {
     const aujourdhui = new Date();
-    aujourdhui.setHours(0, 0, 0, 0);
-    const demain = new Date(aujourdhui);
-    demain.setDate(demain.getDate() + 1);
+    const debutJour = new Date(aujourdhui.getFullYear(), aujourdhui.getMonth(), aujourdhui.getDate());
+    const finJour = new Date(debutJour.getTime() + 24 * 60 * 60 * 1000);
 
-    const [
-      commandesEnCours,
-      commandesALivrerAujourdhui,
-      detteTotal,
-      versementsAujourdhui
-    ] = await Promise.all([
-      // Commandes en cours
-      Commande.countDocuments({ statut: 'en_cours' }),
-      
-      // Commandes à livrer aujourd'hui
-      Commande.countDocuments({
+    // Commandes en cours
+    const commandesEnCours = await prisma.commande.count({
+      where: {
+        statut: 'EN_COURS'
+      }
+    });
+
+    // Commandes à livrer aujourd'hui
+    const commandesALivrerAujourdhui = await prisma.commande.count({
+      where: {
         dateLivraisonPrevue: {
-          $gte: aujourdhui,
-          $lt: demain
+          gte: debutJour,
+          lt: finJour
         },
-        statut: 'en_cours'
-      }),
-      
-      // Dette totale (commandes livrées non entièrement payées)
-      Commande.aggregate([
-        { $match: { statut: { $in: ['livre', 'paye'] } } },
-        {
-          $lookup: {
-            from: 'paiements',
-            localField: '_id',
-            foreignField: 'commande',
-            as: 'paiements'
-          }
-        },
-        {
-          $addFields: {
-            montantPaye: { $sum: '$paiements.montant' },
-            reste: { $subtract: ['$montant', { $sum: '$paiements.montant' }] }
-          }
-        },
-        { $match: { reste: { $gt: 0 } } },
-        { $group: { _id: null, detteTotal: { $sum: '$reste' } } }
-      ]),
-      
-      // Versements d'aujourd'hui
-      Paiement.aggregate([
-        {
-          $match: {
-            date: {
-              $gte: aujourdhui,
-              $lt: demain
-            }
-          }
-        },
-        {
-          $group: {
-            _id: null,
-            nombreVersements: { $sum: 1 },
-            montantTotal: { $sum: '$montant' }
-          }
+        statut: 'EN_COURS'
+      }
+    });
+
+    // Dette totale (commandes livrées mais non payées)
+    const detteTotale = await prisma.commande.aggregate({
+      where: {
+        statut: 'LIVRE'
+      },
+      _sum: {
+        montant: true
+      }
+    });
+
+    // Versements d'aujourd'hui
+    const versementsAujourdhui = await prisma.paiement.aggregate({
+      where: {
+        date: {
+          gte: debutJour,
+          lt: finJour
         }
-      ])
-    ]);
+      },
+      _sum: {
+        montant: true
+      }
+    });
 
     res.json({
       success: true,
@@ -466,11 +362,8 @@ const getStatistiques = async (req, res) => {
       data: {
         commandesEnCours,
         commandesALivrerAujourdhui,
-        detteTotal: detteTotal[0]?.detteTotal || 0,
-        versementsAujourdhui: {
-          nombre: versementsAujourdhui[0]?.nombreVersements || 0,
-          montant: versementsAujourdhui[0]?.montantTotal || 0
-        }
+        detteTotale: detteTotale._sum.montant || 0,
+        versementsAujourdhui: versementsAujourdhui._sum.montant || 0
       }
     });
   } catch (error) {
@@ -486,7 +379,6 @@ module.exports = {
   createCommande,
   getCommandes,
   getCommandeById,
-  updateCommande,
   marquerLivree,
   annulerCommande,
   getStatistiques

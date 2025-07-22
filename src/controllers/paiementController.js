@@ -1,5 +1,4 @@
-const Paiement = require('../models/Paiement');
-const Commande = require('../models/Commande');
+const { prisma, includes, generateNextNumber } = require('../models');
 const { validationResult } = require('express-validator');
 const { paginer, construireReponsePaginee, calculerMontantVersement } = require('../utils/helpers');
 

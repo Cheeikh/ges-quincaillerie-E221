@@ -5,7 +5,8 @@ const {
   getFournisseurs,
   getFournisseurById,
   updateFournisseur,
-  toggleArchiveFournisseur
+  archiveFournisseur,
+  unarchiveFournisseur
 } = require('../controllers/fournisseurController');
 const { authenticate, isGestionnaire } = require('../middleware/auth');
 
@@ -30,6 +31,7 @@ router.put('/:id', authenticate, isGestionnaire, [
   body('email').optional().isEmail().withMessage('Email invalide')
 ], updateFournisseur);
 
-router.patch('/:id/archive', authenticate, isGestionnaire, toggleArchiveFournisseur);
+router.patch('/:id/archive', authenticate, isGestionnaire, archiveFournisseur);
+router.patch('/:id/unarchive', authenticate, isGestionnaire, unarchiveFournisseur);
 
 module.exports = router;

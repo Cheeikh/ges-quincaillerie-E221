@@ -4,7 +4,6 @@ const {
   createCommande,
   getCommandes,
   getCommandeById,
-  updateCommande,
   marquerLivree,
   annulerCommande,
   getStatistiques
@@ -226,10 +225,7 @@ router.get('/:id', authenticate, isGestionnaireOrResponsableAchat, getCommandeBy
  *       200:
  *         description: Commande mise à jour avec succès
  */
-router.put('/:id', authenticate, isResponsableAchat, [
-  body('articles').optional().isArray({ min: 1 }).withMessage('Au moins un article est requis'),
-  body('dateLivraisonPrevue').optional().isISO8601().withMessage('Date de livraison invalide')
-], updateCommande);
+// Route de mise à jour supprimée - les commandes ne peuvent pas être modifiées après création
 
 /**
  * @swagger
