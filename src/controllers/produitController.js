@@ -1,6 +1,4 @@
-const mongoose = require('mongoose');
-const Produit = require('../models/Produit');
-const SousCategorie = require('../models/SousCategorie');
+const { prisma, includes } = require('../models');
 const { validationResult } = require('express-validator');
 const { paginer, construireReponsePaginee } = require('../utils/helpers');
 const path = require('path');
@@ -17,11 +15,14 @@ const createProduit = async (req, res) => {
       });
     }
 
-    const { code, designation, quantiteStock, prixUnitaire, sousCategorie } = req.body;
+    const { code, designation, quantiteStock, prixUnitaire, sousCategorieId } = req.body;
 
-    // Vérifier que la sous-catégorie existe
-    const sousCategorieExist = await SousCategorie.findById(sousCategorie);
-    if (!sousCategorieExist || sousCategorieExist.isArchived) {
+    // Vérifier que la sous-catégorie existe et n'est pas archivée
+    const sousCategorie = await prisma.sousCategorie.findUnique({
+      where: { id: sousCategorieId }
+    });
+
+    if (!sousCategorie || sousCategorie.isArchived) {
       return res.status(400).json({
         success: false,
         message: 'Sous-catégorie invalide ou archivée'
@@ -31,9 +32,9 @@ const createProduit = async (req, res) => {
     const produitData = {
       code,
       designation,
-      quantiteStock,
-      prixUnitaire,
-      sousCategorie
+      quantiteStock: parseInt(quantiteStock),
+      prixUnitaire: parseFloat(prixUnitaire),
+      sousCategorieId
     };
 
     // Ajouter l'image si elle existe
@@ -41,27 +42,34 @@ const createProduit = async (req, res) => {
       produitData.image = req.file.filename;
     }
 
-    const produit = new Produit(produitData);
-    await produit.save();
-    await produit.populate('sousCategorie');
+    const produit = await prisma.produit.create({
+      data: produitData,
+      include: includes.PRODUIT_INCLUDE
+    });
 
     res.status(201).json({
       success: true,
       message: 'Produit créé avec succès',
-      data: { produit }
+      data: {
+        produit
+      }
     });
   } catch (error) {
-    // Supprimer le fichier uploadé en cas d'erreur
+    // Supprimer le fichier image en cas d'erreur
     if (req.file) {
-      fs.unlink(path.join(__dirname, '../../uploads', req.file.filename), () => {});
+      const imagePath = path.join(__dirname, '../../uploads', req.file.filename);
+      if (fs.existsSync(imagePath)) {
+        fs.unlinkSync(imagePath);
+      }
     }
 
-    if (error.code === 11000) {
+    if (error.code === 'P2002') { // Unique constraint error
       return res.status(400).json({
         success: false,
         message: 'Un produit avec ce code existe déjà'
       });
     }
+
     console.error('Erreur lors de la création du produit:', error);
     res.status(500).json({
       success: false,
@@ -76,69 +84,67 @@ const getProduits = async (req, res) => {
       page = 1, 
       limit = 10, 
       search = '', 
-      sousCategorie,
-      categorie,
+      sousCategorieId = '', 
+      categorieId = '',
       includeArchived = false 
     } = req.query;
     const { skip, limit: limitNum } = paginer(page, limit);
 
-    const filter = {};
+    // Construire le filtre
+    const where = {};
     if (!includeArchived || includeArchived === 'false') {
-      filter.isArchived = false;
+      where.isArchived = false;
     }
+
     if (search) {
-      filter.$or = [
-        { code: { $regex: search, $options: 'i' } },
-        { designation: { $regex: search, $options: 'i' } }
+      where.OR = [
+        {
+          code: {
+            contains: search,
+            mode: 'insensitive'
+          }
+        },
+        {
+          designation: {
+            contains: search,
+            mode: 'insensitive'
+          }
+        }
       ];
     }
-    if (sousCategorie) {
-      filter.sousCategorie = sousCategorie;
+
+    if (sousCategorieId) {
+      where.sousCategorieId = sousCategorieId;
     }
 
-    let pipeline = [
-      { $match: filter },
-      {
-        $lookup: {
-          from: 'souscategories',
-          localField: 'sousCategorie',
-          foreignField: '_id',
-          as: 'sousCategorieData'
-        }
+    if (categorieId) {
+      where.sousCategorie = {
+        categorieId: categorieId
+      };
+    }
+
+    // Compter le total
+    const total = await prisma.produit.count({ where });
+
+    // Récupérer les produits avec pagination
+    const produits = await prisma.produit.findMany({
+      where,
+      skip,
+      take: limitNum,
+      orderBy: {
+        designation: 'asc'
       },
-      {
-        $lookup: {
-          from: 'categories',
-          localField: 'sousCategorieData.categorie',
-          foreignField: '_id',
-          as: 'categorieData'
-        }
-      }
-    ];
+      include: includes.PRODUIT_INCLUDE
+    });
 
-    if (categorie) {
-      pipeline.splice(1, 0, {
-        $match: { 'categorieData._id': new mongoose.Types.ObjectId(categorie) }
-      });
-    }
-
-    pipeline.push(
-      { $sort: { designation: 1 } },
-      { $skip: skip },
-      { $limit: limitNum }
-    );
-
-    const [produits, total] = await Promise.all([
-      Produit.aggregate(pipeline),
-      Produit.countDocuments(filter)
-    ]);
-
-    const response = construireReponsePaginee(produits, total, page, limit);
+    const pagination = construireReponsePaginee(total, page, limitNum);
 
     res.json({
       success: true,
-      message: 'Produits récupérés avec succès',
-      ...response
+      data: {
+        produits,
+        pagination
+      }
     });
   } catch (error) {
     console.error('Erreur lors de la récupération des produits:', error);
@@ -151,13 +157,12 @@ const getProduits = async (req, res) => {
 
 const getProduitById = async (req, res) => {
   try {
-    const produit = await Produit.findById(req.params.id)
-      .populate({
-        path: 'sousCategorie',
-        populate: {
-          path: 'categorie'
-        }
-      });
+    const { id } = req.params;
+
+    const produit = await prisma.produit.findUnique({
+      where: { id },
+      include: includes.PRODUIT_INCLUDE
+    });
 
     if (!produit) {
       return res.status(404).json({
@@ -168,8 +173,9 @@ const getProduitById = async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Produit récupéré avec succès',
-      data: { produit }
+      data: {
+        produit
+      }
     });
   } catch (error) {
     console.error('Erreur lors de la récupération du produit:', error);
@@ -192,12 +198,27 @@ const updateProduit = async (req, res) => {
     }
 
     const { id } = req.params;
-    const updateData = { ...req.body };
+    const { code, designation, quantiteStock, prixUnitaire, sousCategorieId } = req.body;
+
+    // Récupérer le produit actuel pour l'image
+    const produitActuel = await prisma.produit.findUnique({
+      where: { id }
+    });
+
+    if (!produitActuel) {
+      return res.status(404).json({
+        success: false,
+        message: 'Produit non trouvé'
+      });
+    }
 
     // Vérifier la sous-catégorie si elle est fournie
-    if (updateData.sousCategorie) {
-      const sousCategorieExist = await SousCategorie.findById(updateData.sousCategorie);
-      if (!sousCategorieExist || sousCategorieExist.isArchived) {
+    if (sousCategorieId) {
+      const sousCategorie = await prisma.sousCategorie.findUnique({
+        where: { id: sousCategorieId }
+      });
+
+      if (!sousCategorie || sousCategorie.isArchived) {
         return res.status(400).json({
           success: false,
           message: 'Sous-catégorie invalide ou archivée'
@@ -205,45 +226,55 @@ const updateProduit = async (req, res) => {
       }
     }
 
-    const produitExistant = await Produit.findById(id);
-    if (!produitExistant) {
-      return res.status(404).json({
-        success: false,
-        message: 'Produit non trouvé'
-      });
-    }
+    const updateData = {
+      code,
+      designation,
+      quantiteStock: quantiteStock !== undefined ? parseInt(quantiteStock) : undefined,
+      prixUnitaire: prixUnitaire !== undefined ? parseFloat(prixUnitaire) : undefined,
+      ...(sousCategorieId && { sousCategorieId })
+    };
 
     // Gérer l'image
     if (req.file) {
       // Supprimer l'ancienne image si elle existe
-      if (produitExistant.image) {
-        fs.unlink(path.join(__dirname, '../../uploads', produitExistant.image), () => {});
+      if (produitActuel.image) {
+        const oldImagePath = path.join(__dirname, '../../uploads', produitActuel.image);
+        if (fs.existsSync(oldImagePath)) {
+          fs.unlinkSync(oldImagePath);
+        }
       }
       updateData.image = req.file.filename;
     }
 
-    const produit = await Produit.findByIdAndUpdate(
-      id,
-      updateData,
-      { new: true, runValidators: true }
-    ).populate('sousCategorie');
+    const produit = await prisma.produit.update({
+      where: { id },
+      data: updateData,
+      include: includes.PRODUIT_INCLUDE
+    });
 
     res.json({
       success: true,
       message: 'Produit mis à jour avec succès',
-      data: { produit }
+      data: {
+        produit
+      }
     });
   } catch (error) {
+    // Supprimer le nouveau fichier en cas d'erreur
     if (req.file) {
-      fs.unlink(path.join(__dirname, '../../uploads', req.file.filename), () => {});
+      const imagePath = path.join(__dirname, '../../uploads', req.file.filename);
+      if (fs.existsSync(imagePath)) {
+        fs.unlinkSync(imagePath);
+      }
     }
 
-    if (error.code === 11000) {
+    if (error.code === 'P2002') { // Unique constraint error
       return res.status(400).json({
         success: false,
         message: 'Un produit avec ce code existe déjà'
       });
     }
+
     console.error('Erreur lors de la mise à jour du produit:', error);
     res.status(500).json({
       success: false,
@@ -252,9 +283,128 @@ const updateProduit = async (req, res) => {
   }
 };
 
-const toggleArchiveProduit = async (req, res) => {
+const updateStock = async (req, res) => {
   try {
-    const produit = await Produit.findById(req.params.id);
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Erreurs de validation',
+        errors: errors.array()
+      });
+    }
+
+    const { id } = req.params;
+    const { quantiteStock } = req.body;
+
+    const produit = await prisma.produit.update({
+      where: { id },
+      data: {
+        quantiteStock: parseInt(quantiteStock)
+      },
+      include: includes.PRODUIT_INCLUDE
+    });
+
+    res.json({
+      success: true,
+      message: 'Stock mis à jour avec succès',
+      data: {
+        produit
+      }
+    });
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({
+        success: false,
+        message: 'Produit non trouvé'
+      });
+    }
+
+    console.error('Erreur lors de la mise à jour du stock:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur interne du serveur'
+    });
+  }
+};
+
+const archiveProduit = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const produit = await prisma.produit.update({
+      where: { id },
+      data: {
+        isArchived: true
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Produit archivé avec succès',
+      data: {
+        produit
+      }
+    });
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({
+        success: false,
+        message: 'Produit non trouvé'
+      });
+    }
+
+    console.error('Erreur lors de l\'archivage du produit:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur interne du serveur'
+    });
+  }
+};
+
+const unarchiveProduit = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const produit = await prisma.produit.update({
+      where: { id },
+      data: {
+        isArchived: false
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Produit désarchivé avec succès',
+      data: {
+        produit
+      }
+    });
+  } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({
+        success: false,
+        message: 'Produit non trouvé'
+      });
+    }
+
+    console.error('Erreur lors du désarchivage du produit:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur interne du serveur'
+    });
+  }
+};
+
+const deleteProduit = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Récupérer le produit pour l'image
+    const produit = await prisma.produit.findUnique({
+      where: { id }
+    });
+
     if (!produit) {
       return res.status(404).json({
         success: false,
@@ -262,16 +412,39 @@ const toggleArchiveProduit = async (req, res) => {
       });
     }
 
-    produit.isArchived = !produit.isArchived;
-    await produit.save();
+    // Vérifier s'il y a des commandes avec ce produit
+    const articlesCount = await prisma.articleCommande.count({
+      where: {
+        produitId: id
+      }
+    });
+
+    if (articlesCount > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Impossible de supprimer un produit qui fait partie de commandes'
+      });
+    }
+
+    // Supprimer le produit
+    await prisma.produit.delete({
+      where: { id }
+    });
+
+    // Supprimer l'image si elle existe
+    if (produit.image) {
+      const imagePath = path.join(__dirname, '../../uploads', produit.image);
+      if (fs.existsSync(imagePath)) {
+        fs.unlinkSync(imagePath);
+      }
+    }
 
     res.json({
       success: true,
-      message: `Produit ${produit.isArchived ? 'archivé' : 'désarchivé'} avec succès`,
-      data: { produit }
+      message: 'Produit supprimé avec succès'
     });
   } catch (error) {
-    console.error('Erreur lors de l\'archivage du produit:', error);
+    console.error('Erreur lors de la suppression du produit:', error);
     res.status(500).json({
       success: false,
       message: 'Erreur interne du serveur'
@@ -284,5 +457,8 @@ module.exports = {
   getProduits,
   getProduitById,
   updateProduit,
-  toggleArchiveProduit
+  updateStock,
+  archiveProduit,
+  unarchiveProduit,
+  deleteProduit
 };

@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const { prisma } = require('../models');
 
 // Middleware d'authentification
 const authenticate = async (req, res, next) => {
@@ -14,7 +14,19 @@ const authenticate = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.id).select('-password');
+    const user = await prisma.user.findUnique({
+      where: { id: decoded.id },
+      select: {
+        id: true,
+        email: true,
+        nom: true,
+        prenom: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true
+      }
+    });
 
     if (!user || !user.isActive) {
       return res.status(401).json({
@@ -56,19 +68,19 @@ const authorize = (...roles) => {
 };
 
 // Middleware pour vérifier si l'utilisateur est gestionnaire
-const isGestionnaire = authorize('gestionnaire');
+const isGestionnaire = authorize('GESTIONNAIRE');
 
 // Middleware pour vérifier si l'utilisateur est responsable achat
-const isResponsableAchat = authorize('responsable_achat');
+const isResponsableAchat = authorize('RESPONSABLE_ACHAT');
 
 // Middleware pour vérifier si l'utilisateur est responsable paiement
-const isResponsablePaiement = authorize('responsable_paiement');
+const isResponsablePaiement = authorize('RESPONSABLE_PAIEMENT');
 
 // Middleware pour vérifier si l'utilisateur est gestionnaire ou responsable achat
-const isGestionnaireOrResponsableAchat = authorize('gestionnaire', 'responsable_achat');
+const isGestionnaireOrResponsableAchat = authorize('GESTIONNAIRE', 'RESPONSABLE_ACHAT');
 
 // Middleware pour vérifier si l'utilisateur est gestionnaire ou responsable paiement
-const isGestionnaireOrResponsablePaiement = authorize('gestionnaire', 'responsable_paiement');
+const isGestionnaireOrResponsablePaiement = authorize('GESTIONNAIRE', 'RESPONSABLE_PAIEMENT');
 
 module.exports = {
   authenticate,

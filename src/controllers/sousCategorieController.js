@@ -1,6 +1,4 @@
-const SousCategorie = require('../models/SousCategorie');
-const Categorie = require('../models/Categorie');
-const Produit = require('../models/Produit');
+const { prisma } = require('../models');
 const { validationResult } = require('express-validator');
 const { paginer, construireReponsePaginee } = require('../utils/helpers');
 
@@ -16,25 +14,30 @@ const createSousCategorie = async (req, res) => {
       });
     }
 
-    const { nom, description, categorie } = req.body;
+    const { nom, description, categorieId } = req.body;
 
-    // Vérifier que la catégorie existe
-    const categorieExist = await Categorie.findById(categorie);
-    if (!categorieExist || categorieExist.isArchived) {
+    // Vérifier que la catégorie parent existe et n'est pas archivée
+    const categorie = await prisma.categorie.findUnique({
+      where: { id: categorieId }
+    });
+
+    if (!categorie || categorie.isArchived) {
       return res.status(400).json({
         success: false,
-        message: 'Catégorie invalide ou archivée'
+        message: 'Catégorie parent non trouvée ou archivée'
       });
     }
 
-    const sousCategorie = new SousCategorie({
-      nom,
-      description,
-      categorie
+    const sousCategorie = await prisma.sousCategorie.create({
+      data: {
+        nom,
+        description,
+        categorieId
+      },
+      include: {
+        categorie: true
+      }
     });
-
-    await sousCategorie.save();
-    await sousCategorie.populate('categorie', 'nom');
 
     res.status(201).json({
       success: true,
@@ -44,7 +47,7 @@ const createSousCategorie = async (req, res) => {
       }
     });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error.code === 'P2002') { // Unique constraint error (nom + categorieId)
       return res.status(400).json({
         success: false,
         message: 'Une sous-catégorie avec ce nom existe déjà dans cette catégorie'
@@ -62,35 +65,62 @@ const createSousCategorie = async (req, res) => {
 // Obtenir toutes les sous-catégories
 const getSousCategories = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search = '', categorie, includeArchived = false } = req.query;
+    const { page = 1, limit = 10, search = '', categorieId = '', includeArchived = false } = req.query;
     const { skip, limit: limitNum } = paginer(page, limit);
 
-    const filter = {};
+    // Construire le filtre
+    const where = {};
     if (!includeArchived || includeArchived === 'false') {
-      filter.isArchived = false;
+      where.isArchived = false;
     }
+
     if (search) {
-      filter.nom = { $regex: search, $options: 'i' };
-    }
-    if (categorie) {
-      filter.categorie = categorie;
+      where.nom = {
+        contains: search,
+        mode: 'insensitive'
+      };
     }
 
-    const [sousCategories, total] = await Promise.all([
-      SousCategorie.find(filter)
-        .populate('categorie', 'nom')
-        .sort({ nom: 1 })
-        .skip(skip)
-        .limit(limitNum),
-      SousCategorie.countDocuments(filter)
-    ]);
+    if (categorieId) {
+      where.categorieId = categorieId;
+    }
 
-    const response = construireReponsePaginee(sousCategories, total, page, limit);
+    // Compter le total
+    const total = await prisma.sousCategorie.count({ where });
+
+    // Récupérer les sous-catégories avec pagination
+    const sousCategories = await prisma.sousCategorie.findMany({
+      where,
+      skip,
+      take: limitNum,
+      orderBy: {
+        nom: 'asc'
+      },
+      include: {
+        categorie: true,
+        produits: {
+          where: {
+            isArchived: false
+          },
+          select: {
+            id: true,
+            code: true,
+            designation: true,
+            quantiteStock: true,
+            prixUnitaire: true
+          }
+        }
+      }
+    });
+
+    const pagination = construireReponsePaginee(total, page, limitNum);
 
     res.json({
       success: true,
-      message: 'Sous-catégories récupérées avec succès',
-      ...response
+      data: {
+        sousCategories,
+        pagination
+      }
     });
   } catch (error) {
     console.error('Erreur lors de la récupération des sous-catégories:', error);
@@ -106,8 +136,20 @@ const getSousCategorieById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const sousCategorie = await SousCategorie.findById(id)
-      .populate('categorie');
+    const sousCategorie = await prisma.sousCategorie.findUnique({
+      where: { id },
+      include: {
+        categorie: true,
+        produits: {
+          where: {
+            isArchived: false
+          },
+          orderBy: {
+            designation: 'asc'
+          }
+        }
+      }
+    });
 
     if (!sousCategorie) {
       return res.status(404).json({
@@ -118,7 +160,6 @@ const getSousCategorieById = async (req, res) => {
 
     res.json({
       success: true,
-      message: 'Sous-catégorie récupérée avec succès',
       data: {
         sousCategorie
       }
@@ -145,31 +186,33 @@ const updateSousCategorie = async (req, res) => {
     }
 
     const { id } = req.params;
-    const { nom, description, categorie } = req.body;
+    const { nom, description, categorieId } = req.body;
 
-    // Vérifier que la catégorie existe si elle est fournie
-    if (categorie) {
-      const categorieExist = await Categorie.findById(categorie);
-      if (!categorieExist || categorieExist.isArchived) {
+    // Si categorieId est fourni, vérifier que la catégorie existe et n'est pas archivée
+    if (categorieId) {
+      const categorie = await prisma.categorie.findUnique({
+        where: { id: categorieId }
+      });
+
+      if (!categorie || categorie.isArchived) {
         return res.status(400).json({
           success: false,
-          message: 'Catégorie invalide ou archivée'
+          message: 'Catégorie parent non trouvée ou archivée'
         });
       }
     }
 
-    const sousCategorie = await SousCategorie.findByIdAndUpdate(
-      id,
-      { nom, description, categorie },
-      { new: true, runValidators: true }
-    ).populate('categorie', 'nom');
-
-    if (!sousCategorie) {
-      return res.status(404).json({
-        success: false,
-        message: 'Sous-catégorie non trouvée'
-      });
-    }
+    const sousCategorie = await prisma.sousCategorie.update({
+      where: { id },
+      data: {
+        nom,
+        description,
+        ...(categorieId && { categorieId })
+      },
+      include: {
+        categorie: true
+      }
+    });
 
     res.json({
       success: true,
@@ -179,7 +222,14 @@ const updateSousCategorie = async (req, res) => {
       }
     });
   } catch (error) {
-    if (error.code === 11000) {
+    if (error.code === 'P2025') { // Record not found
+      return res.status(404).json({
+        success: false,
+        message: 'Sous-catégorie non trouvée'
+      });
+    }
+
+    if (error.code === 'P2002') { // Unique constraint error
       return res.status(400).json({
         success: false,
         message: 'Une sous-catégorie avec ce nom existe déjà dans cette catégorie'
@@ -194,38 +244,48 @@ const updateSousCategorie = async (req, res) => {
   }
 };
 
-// Archiver/Désarchiver une sous-catégorie
-const toggleArchiveSousCategorie = async (req, res) => {
+// Archiver une sous-catégorie
+const archiveSousCategorie = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const sousCategorie = await SousCategorie.findById(id);
-    if (!sousCategorie) {
+    // Vérifier si la sous-catégorie a des produits actifs
+    const produitsCount = await prisma.produit.count({
+      where: {
+        sousCategorieId: id,
+        isArchived: false
+      }
+    });
+
+    if (produitsCount > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Impossible d\'archiver une sous-catégorie qui contient des produits actifs'
+      });
+    }
+
+    const sousCategorie = await prisma.sousCategorie.update({
+      where: { id },
+      data: {
+        isArchived: true
+      }
+    });
+
+    res.json({
+      success: true,
+      message: 'Sous-catégorie archivée avec succès',
+      data: {
+        sousCategorie
+      }
+    });
+  } catch (error) {
+    if (error.code === 'P2025') {
       return res.status(404).json({
         success: false,
         message: 'Sous-catégorie non trouvée'
       });
     }
 
-    sousCategorie.isArchived = !sousCategorie.isArchived;
-    await sousCategorie.save();
-
-    // Si on archive la sous-catégorie, archiver aussi ses produits
-    if (sousCategorie.isArchived) {
-      await Produit.updateMany(
-        { sousCategorie: id },
-        { isArchived: true }
-      );
-    }
-
-    res.json({
-      success: true,
-      message: `Sous-catégorie ${sousCategorie.isArchived ? 'archivée' : 'désarchivée'} avec succès`,
-      data: {
-        sousCategorie
-      }
-    });
-  } catch (error) {
     console.error('Erreur lors de l\'archivage de la sous-catégorie:', error);
     res.status(500).json({
       success: false,
@@ -234,33 +294,76 @@ const toggleArchiveSousCategorie = async (req, res) => {
   }
 };
 
-// Supprimer définitivement une sous-catégorie
-const deleteSousCategorie = async (req, res) => {
+// Désarchiver une sous-catégorie
+const unarchiveSousCategorie = async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Vérifier s'il y a des produits
-    const produits = await Produit.countDocuments({ sousCategorie: id });
-    if (produits > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Impossible de supprimer la sous-catégorie. Elle contient des produits.'
-      });
-    }
+    const sousCategorie = await prisma.sousCategorie.update({
+      where: { id },
+      data: {
+        isArchived: false
+      }
+    });
 
-    const sousCategorie = await SousCategorie.findByIdAndDelete(id);
-    if (!sousCategorie) {
+    res.json({
+      success: true,
+      message: 'Sous-catégorie désarchivée avec succès',
+      data: {
+        sousCategorie
+      }
+    });
+  } catch (error) {
+    if (error.code === 'P2025') {
       return res.status(404).json({
         success: false,
         message: 'Sous-catégorie non trouvée'
       });
     }
 
+    console.error('Erreur lors du désarchivage de la sous-catégorie:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur interne du serveur'
+    });
+  }
+};
+
+// Supprimer définitivement une sous-catégorie (seulement si aucun produit)
+const deleteSousCategorie = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Vérifier si la sous-catégorie a des produits
+    const produitsCount = await prisma.produit.count({
+      where: {
+        sousCategorieId: id
+      }
+    });
+
+    if (produitsCount > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Impossible de supprimer une sous-catégorie qui contient des produits'
+      });
+    }
+
+    await prisma.sousCategorie.delete({
+      where: { id }
+    });
+
     res.json({
       success: true,
       message: 'Sous-catégorie supprimée avec succès'
     });
   } catch (error) {
+    if (error.code === 'P2025') {
+      return res.status(404).json({
+        success: false,
+        message: 'Sous-catégorie non trouvée'
+      });
+    }
+
     console.error('Erreur lors de la suppression de la sous-catégorie:', error);
     res.status(500).json({
       success: false,
@@ -274,6 +377,7 @@ module.exports = {
   getSousCategories,
   getSousCategorieById,
   updateSousCategorie,
-  toggleArchiveSousCategorie,
+  archiveSousCategorie,
+  unarchiveSousCategorie,
   deleteSousCategorie
 };

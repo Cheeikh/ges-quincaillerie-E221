@@ -1,279 +1,311 @@
 # Guide de Déploiement - API Quincaillerie Barro et Frère
 
-## 🎯 Résumé du Projet
+## Vue d'ensemble
 
-L'API REST complète pour la gestion des commandes et livraisons de la quincaillerie Barro et Frère a été **entièrement implémentée** avec les spécifications demandées.
+Cette API REST est construite avec **Node.js**, **Express**, **PostgreSQL** (via **NeonDB**) et **Prisma ORM**. Elle gère la gestion des commandes et livraisons pour la quincaillerie Barro et Frère.
 
-## ✅ Fonctionnalités Implémentées
+## Prérequis
 
-### 🔐 Authentification & Autorisation
-- ✅ Système d'authentification JWT complet
-- ✅ 3 rôles : Gestionnaire, Responsable Achat, Responsable Paiement
-- ✅ Permissions granulaires par rôle
-- ✅ Middleware de sécurité (Helmet, CORS, Rate limiting)
+- **Node.js** v16+ et npm v8+
+- Compte **NeonDB** (ou serveur PostgreSQL)
+- **Git** pour le clonage du repository
 
-### 📦 Gestion du Catalogue
-- ✅ **Catégories** : CRUD complet avec archivage
-- ✅ **Sous-catégories** : Hiérarchie catégorie → sous-catégorie
-- ✅ **Produits** : Code, désignation, stock, prix, image
-- ✅ **Fournisseurs** : Numéro, nom, adresse, contacts
+## Base de données - PostgreSQL avec NeonDB
 
-### 🛒 Gestion des Commandes
-- ✅ **Création de commandes** par le Responsable Achat
-- ✅ **Articles multiples** par commande avec prix d'achat variables
-- ✅ **Statuts** : En cours, Livré, Payé, Annulé
-- ✅ **Gestion des livraisons** avec dates prévues/réelles
-- ✅ **Mise à jour automatique des stocks** à la livraison
-- ✅ **Filtrage** par date, statut, fournisseur
+### 1. Configuration NeonDB
 
-### 💰 Système de Paiement
-- ✅ **Versements échelonnés** : Maximum 3 versements par commande
-- ✅ **Intervalle de 5 jours** entre versements (logique implémentée)
-- ✅ **Suivi des dettes** par fournisseur
-- ✅ **Historique complet** des paiements
-- ✅ **Statut automatique** des commandes (payé quand complet)
+1. Créez un compte sur [neon.tech](https://neon.tech)
+2. Créez un nouveau projet/base de données
+3. Notez l'URL de connexion fournie (format: `postgresql://username:password@host:port/database?sslmode=require`)
 
-### 📊 Statistiques Demandées
-- ✅ **Commandes en cours**
-- ✅ **Commandes à livrer dans la journée**
-- ✅ **Dette totale** de la quincaillerie
-- ✅ **Versements de la journée**
+### 2. Configuration des Variables d'Environnement
 
-### 📚 Documentation
-- ✅ **Swagger/OpenAPI 3.0** complet
-- ✅ Documentation interactive à `/api-docs`
-- ✅ Schémas de données détaillés
-- ✅ Exemples de requêtes/réponses
+Créez un fichier `.env` à la racine du projet :
 
-## 🏗️ Architecture Technique
+```env
+# Configuration du serveur
+NODE_ENV=production
+PORT=3000
 
-```
-├── src/
-│   ├── config/           # Database & Swagger
-│   ├── controllers/      # Logique métier (8 contrôleurs)
-│   ├── middleware/       # Auth, Upload, Validation
-│   ├── models/          # 6 modèles Mongoose
-│   ├── routes/          # Routes avec validation
-│   ├── utils/           # Helpers & utilitaires
-│   └── app.js          # Serveur Express
-├── scripts/             # Script de seed avec données test
-├── uploads/            # Dossier pour images produits
-└── package.json       # Dépendances configurées
+# Configuration de la base de données PostgreSQL (NeonDB)
+DATABASE_URL="postgresql://username:password@your-neon-host.neon.tech:5432/your-database?sslmode=require"
+
+# Configuration JWT
+JWT_SECRET=your_super_secret_jwt_key_change_this_in_production
+JWT_EXPIRES_IN=7d
+
+# Configuration bcrypt
+BCRYPT_SALT_ROUNDS=12
+
+# Configuration CORS (optionnel)
+ALLOWED_ORIGINS=https://your-frontend-domain.com
 ```
 
-## 🚀 Démarrage Rapide
+**⚠️ Important** : Changez `JWT_SECRET` par une clé secrète forte et unique.
 
-### 1. Installation
+## Installation et Déploiement
+
+### 1. Clonage et Installation
 
 ```bash
-# Cloner le projet
-git clone <repository-url>
+# Cloner le repository
+git clone https://github.com/Cheeikh/ges-quincaillerie-E221.git
 cd ges-quincaillerie-E221
 
 # Installer les dépendances
 npm install
+
+# Générer le client Prisma
+npm run db:generate
 ```
 
-### 2. Configuration MongoDB
-
-**Option A - MongoDB Local:**
-```bash
-# Installer MongoDB
-sudo apt update
-sudo apt install mongodb
-
-# Démarrer MongoDB
-sudo systemctl start mongodb
-sudo systemctl enable mongodb
-```
-
-**Option B - MongoDB Atlas (Recommandé):**
-1. Créer un compte sur [MongoDB Atlas](https://www.mongodb.com/atlas)
-2. Créer un cluster gratuit
-3. Obtenir la chaîne de connexion
-4. Modifier `.env` avec votre URI MongoDB Atlas
-
-### 3. Configuration
+### 2. Configuration de la Base de Données
 
 ```bash
-# Copier le fichier d'environnement
-cp .env.example .env
+# Appliquer les migrations Prisma
+npm run db:migrate
 
-# Modifier .env avec vos paramètres
-# Obligatoire: MONGODB_URI et JWT_SECRET
-```
+# Ou pour pousser le schéma directement (pour le développement)
+npm run db:push
 
-### 4. Initialisation
-
-```bash
-# Créer des données de test
+# Peupler la base avec des données de test (optionnel)
 npm run seed
+```
 
-# Démarrer l'application
+### 3. Démarrage de l'Application
+
+```bash
+# Mode production
+npm start
+
+# Mode développement (avec hot reload)
 npm run dev
 ```
 
-### 5. Accès
+L'API sera accessible sur `http://localhost:3000` (ou le port spécifié dans PORT).
 
-- **API** : http://localhost:3000/api
-- **Documentation** : http://localhost:3000/api-docs
-- **Health Check** : http://localhost:3000/api/health
+## Options de Déploiement
 
-## 👥 Comptes de Test
+### Option 1: Vercel (Recommandé)
 
-Après `npm run seed` :
+1. **Installation de Vercel CLI**
+   ```bash
+   npm i -g vercel
+   ```
 
-| Rôle | Email | Mot de passe |
-|------|-------|-------------|
-| **Gestionnaire** | gestionnaire@quincaillerie.com | password123 |
-| **Responsable Achat** | achat@quincaillerie.com | password123 |
-| **Responsable Paiement** | paiement@quincaillerie.com | password123 |
+2. **Configuration du projet**
+   ```bash
+   vercel init
+   ```
 
-## 🔄 Workflow d'Utilisation
+3. **Variables d'environnement**
+   ```bash
+   vercel env add DATABASE_URL
+   vercel env add JWT_SECRET
+   vercel env add BCRYPT_SALT_ROUNDS
+   ```
 
-### 1. Authentification
+4. **Déploiement**
+   ```bash
+   vercel --prod
+   ```
+
+### Option 2: Railway
+
+1. Connectez votre repository GitHub à Railway
+2. Ajoutez les variables d'environnement dans le dashboard
+3. Railway détectera automatiquement votre app Node.js
+4. Le déploiement se fera automatiquement
+
+### Option 3: Render
+
+1. Connectez votre repository à Render
+2. Configurez les variables d'environnement
+3. Définissez la commande de build : `npm install && npm run db:generate`
+4. Définissez la commande de start : `npm start`
+
+### Option 4: DigitalOcean App Platform
+
+1. **Fichier de configuration** (`.do/app.yaml`)
+   ```yaml
+   name: quincaillerie-api
+   services:
+   - name: api
+     source_dir: /
+     github:
+       repo: your-username/ges-quincaillerie-E221
+       branch: main
+     run_command: npm start
+     environment_slug: node-js
+     instance_count: 1
+     instance_size_slug: basic-xxs
+     envs:
+     - key: NODE_ENV
+       value: production
+     - key: DATABASE_URL
+       value: ${DATABASE_URL}
+     - key: JWT_SECRET
+       value: ${JWT_SECRET}
+   ```
+
+## Configuration Post-Déploiement
+
+### 1. Vérification de l'API
+
+Testez les endpoints principaux :
+
 ```bash
-POST /api/auth/login
+# Health check
+curl https://your-api-domain.com/
+
+# Documentation Swagger
+# Visitez: https://your-api-domain.com/api-docs
+```
+
+### 2. Création du Compte Administrateur
+
+```bash
+# Exécuter le script de seed pour créer les comptes de test
+npm run seed
+```
+
+Ou créez manuellement via l'endpoint `/api/auth/register` :
+
+```json
 {
-  "email": "gestionnaire@quincaillerie.com",
-  "password": "password123"
+  "email": "admin@quincaillerie.com",
+  "password": "motdepasse123",
+  "nom": "Admin",
+  "prenom": "Système",
+  "role": "GESTIONNAIRE"
 }
 ```
 
-### 2. Gestion du Catalogue (Gestionnaire)
-```bash
-# Créer catégorie
-POST /api/categories
-# Créer sous-catégorie
-POST /api/sous-categories
-# Créer produit avec image
-POST /api/produits
-# Créer fournisseur
-POST /api/fournisseurs
-```
-
-### 3. Processus de Commande (Responsable Achat)
-```bash
-# Créer commande
-POST /api/commandes
-# Modifier commande (si en cours)
-PUT /api/commandes/:id
-# Marquer comme livrée
-PATCH /api/commandes/:id/livrer
-```
-
-### 4. Gestion des Paiements (Responsable Paiement)
-```bash
-# Voir commandes à payer
-GET /api/paiements/commandes-en-cours
-# Enregistrer paiement
-POST /api/paiements
-# Voir dette par fournisseur
-GET /api/paiements/dette-fournisseurs
-```
-
-### 5. Statistiques
-```bash
-GET /api/commandes/statistiques
-```
-
-## 🔒 Sécurité Implémentée
-
-- **JWT** avec expiration configurable
-- **BCrypt** pour hashage des mots de passe (12 rounds)
-- **Helmet** pour headers sécurisés
-- **CORS** configuré
-- **Rate Limiting** (100 req/15min par IP)
-- **Validation stricte** avec Express Validator
-- **Upload sécurisé** avec Multer (images uniquement, 5MB max)
-
-## 📝 Permissions par Rôle
-
-### Gestionnaire
-- ✅ CRUD catégories/sous-catégories/produits/fournisseurs
-- ✅ Archivage/suppression
-- ✅ Vue globale commandes/paiements
-
-### Responsable Achat
-- ✅ CRUD commandes (ses propres)
-- ✅ Marquage livraisons
-- ✅ Annulation commandes
-
-### Responsable Paiement
-- ✅ Enregistrement paiements
-- ✅ Vue commandes à payer
-- ✅ Suivi dettes fournisseurs
-
-## 🧪 Tests
+## Scripts de Base de Données Disponibles
 
 ```bash
-# Test basique de l'API
-node test-api.js
+# Générer le client Prisma
+npm run db:generate
 
-# Test complet des endpoints
-node test-endpoints.js
+# Créer et appliquer une nouvelle migration
+npm run db:migrate
+
+# Pousser le schéma vers la base (dev uniquement)
+npm run db:push
+
+# Réinitialiser la base de données
+npm run db:reset
+
+# Ouvrir Prisma Studio (interface d'administration)
+npm run db:studio
+
+# Peupler avec des données de test
+npm run seed
 ```
 
-## 🐛 Dépannage
+## Gestion des Migrations Prisma
 
-### MongoDB Connection Error
+### En Production
+
+1. **Avant le déploiement** :
+   ```bash
+   # Créer une migration
+   npx prisma migrate dev --name describe_your_changes
+   
+   # Commiter les fichiers de migration
+   git add prisma/migrations/
+   git commit -m "Add migration: describe_your_changes"
+   ```
+
+2. **Après le déploiement** :
+   Les migrations sont automatiquement appliquées via `npm run db:migrate` dans le processus de build.
+
+## Surveillance et Maintenance
+
+### 1. Logs
+
+- Activez les logs Prisma en développement dans `src/config/database.js`
+- Utilisez les logs de votre plateforme de déploiement en production
+
+### 2. Sauvegarde Base de Données
+
+Pour NeonDB :
+- Les sauvegardes automatiques sont gérées par Neon
+- Configurez des sauvegardes supplémentaires si nécessaire
+
+### 3. Monitoring
+
+Surveillez :
+- Temps de réponse de l'API
+- Utilisation de la base de données
+- Erreurs d'application
+- Consommation mémoire
+
+## Dépannage
+
+### Erreurs Courantes
+
+1. **Erreur de connexion à la base de données**
+   ```
+   Error connecting to PostgreSQL: ...
+   ```
+   - Vérifiez l'URL `DATABASE_URL`
+   - Vérifiez les paramètres de connexion SSL
+
+2. **Erreur Prisma Client**
+   ```
+   PrismaClientInitializationError
+   ```
+   - Exécutez `npm run db:generate`
+   - Vérifiez que les migrations sont appliquées
+
+3. **Erreur JWT**
+   ```
+   Token invalide
+   ```
+   - Vérifiez que `JWT_SECRET` est défini
+   - Vérifiez la validité du token
+
+### Commandes de Diagnostic
+
 ```bash
-# Vérifier MongoDB local
-sudo systemctl status mongodb
+# Vérifier la connexion à la base
+npx prisma db pull
 
-# Ou utiliser MongoDB Atlas
-# Modifier MONGODB_URI dans .env
+# Vérifier l'état des migrations
+npx prisma migrate status
+
+# Réinitialiser le client Prisma
+rm -rf node_modules/.prisma
+npm run db:generate
 ```
 
-### Port déjà utilisé
-```bash
-# Changer le port dans .env
-PORT=3001
+## Sécurité en Production
 
-# Ou tuer le processus
-pkill -f "node.*app.js"
-```
+1. **Variables d'environnement** : Ne jamais commiter le fichier `.env`
+2. **HTTPS** : Toujours utiliser HTTPS en production
+3. **Rate Limiting** : Configuré par défaut (100 requêtes/15min)
+4. **CORS** : Configurez les origines autorisées
+5. **Helmet** : Protection des headers HTTP (activé)
 
-### Erreurs de validation
-- Vérifier la documentation Swagger à `/api-docs`
-- Tous les champs requis sont documentés
+## Endpoints Principaux
 
-## 🚀 Déploiement Production
+- **Documentation** : `/api-docs` (Swagger UI)
+- **Authentification** : `/api/auth/*`
+- **Catégories** : `/api/categories/*`
+- **Sous-catégories** : `/api/sous-categories/*`
+- **Fournisseurs** : `/api/fournisseurs/*`
+- **Produits** : `/api/produits/*`
+- **Commandes** : `/api/commandes/*`
+- **Paiements** : `/api/paiements/*`
 
-### Variables d'environnement de production
-```env
-NODE_ENV=production
-PORT=80
-MONGODB_URI=mongodb+srv://...
-JWT_SECRET=complex_secret_key_256_bits
-JWT_EXPIRE=24h
-```
+## Support
 
-### Déploiement
-```bash
-# Install PM2 pour production
-npm install -g pm2
+Pour toute question ou problème :
+- Consultez la documentation Swagger à `/api-docs`
+- Vérifiez les logs de l'application
+- Contactez l'équipe de développement
 
-# Démarrer avec PM2
-pm2 start src/app.js --name quincaillerie-api
+---
 
-# Sauvegarder la configuration
-pm2 save
-pm2 startup
-```
-
-## ✅ Validation du Cahier des Charges
-
-Toutes les exigences du cahier des charges ont été **entièrement implémentées** :
-
-- ✅ Gestion hiérarchique catégories → sous-catégories → produits
-- ✅ Gestion complète des fournisseurs
-- ✅ Système de commandes avec articles multiples et prix variables
-- ✅ Gestion des livraisons et mise à jour stocks
-- ✅ Système de paiement en 3 versements max avec intervalle 5 jours
-- ✅ Gestion des rôles et permissions
-- ✅ Toutes les statistiques demandées
-- ✅ API REST avec documentation Swagger
-- ✅ Sécurité et authentification JWT
-
-**🎉 L'API est entièrement fonctionnelle et prête pour la production !**
+**Note** : Ce guide suppose l'utilisation de NeonDB. Pour d'autres fournisseurs PostgreSQL, adaptez l'URL de connexion en conséquence.

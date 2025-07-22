@@ -1,6 +1,6 @@
 # API Gestion Quincaillerie Barro et Frère
 
-API REST complète pour la gestion des commandes et livraisons de la quincaillerie Barro et Frère, développée avec Node.js, Express, MongoDB et Swagger.
+API REST complète pour la gestion des commandes et livraisons de la quincaillerie Barro et Frère, développée avec Node.js, Express, PostgreSQL (NeonDB), Prisma ORM et Swagger.
 
 ## 📋 Table des matières
 
@@ -51,7 +51,7 @@ API REST complète pour la gestion des commandes et livraisons de la quincailler
 
 L'application suit une architecture MVC avec les couches suivantes :
 
-- **Modèles** : Schémas MongoDB avec Mongoose
+- **Modèles** : Schémas PostgreSQL avec Prisma ORM
 - **Vues** : API REST avec documentation Swagger
 - **Contrôleurs** : Logique métier
 - **Middlewares** : Authentification, autorisation, validation
@@ -61,7 +61,7 @@ L'application suit une architecture MVC avec les couches suivantes :
 
 - **Runtime** : Node.js
 - **Framework** : Express.js
-- **Base de données** : MongoDB avec Mongoose ODM
+- **Base de données** : PostgreSQL avec Prisma ORM
 - **Authentification** : JWT (JSON Web Tokens)
 - **Validation** : Express Validator
 - **Documentation** : Swagger/OpenAPI 3.0
@@ -74,7 +74,7 @@ L'application suit une architecture MVC avec les couches suivantes :
 ### Prérequis
 
 - Node.js (version 16+)
-- MongoDB (local ou cloud)
+- Compte NeonDB ou serveur PostgreSQL
 - npm ou yarn
 
 ### Étapes d'installation
@@ -96,12 +96,24 @@ cp .env.example .env
 ```
 Puis modifier le fichier `.env` avec vos paramètres.
 
-4. **Initialiser la base de données avec des données de test**
+4. **Générer le client Prisma**
 ```bash
+npm run db:generate
+```
+
+5. **Initialiser la base de données**
+```bash
+# Appliquer les migrations
+npm run db:migrate
+
+# Ou pousser le schéma (développement)
+npm run db:push
+
+# Peupler avec des données de test
 npm run seed
 ```
 
-5. **Démarrer l'application**
+6. **Démarrer l'application**
 ```bash
 # Mode développement
 npm run dev
@@ -117,15 +129,15 @@ npm start
 ```env
 PORT=3000
 NODE_ENV=development
-MONGODB_URI=mongodb://localhost:27017/quincaillerie_db
+DATABASE_URL="postgresql://username:password@host:port/database?sslmode=require"
 JWT_SECRET=your_jwt_secret_key_here_change_in_production
-JWT_EXPIRE=7d
+JWT_EXPIRES_IN=7d
 BCRYPT_SALT_ROUNDS=12
 ```
 
 ### Base de données
 
-L'application utilise MongoDB. Assurez-vous que MongoDB est installé et en cours d'exécution, ou utilisez MongoDB Atlas pour une base de données cloud.
+L'application utilise PostgreSQL via Prisma ORM. Vous pouvez utiliser NeonDB (recommandé) pour une base de données cloud PostgreSQL gratuite et performante.
 
 ## 🚦 Utilisation
 
