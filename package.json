@@ -1,0 +1,54 @@
+{
+  "name": "quincaillerie-barro-api",
+  "version": "1.0.0",
+  "description": "API REST pour la gestion des commandes et livraisons de la quincaillerie Barro et Frère",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "seed": "node scripts/seed.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Cheeikh/ges-quincaillerie-E221.git"
+  },
+  "keywords": [
+    "quincaillerie",
+    "gestion",
+    "commandes",
+    "livraisons",
+    "api",
+    "rest",
+    "express",
+    "mongodb",
+    "swagger"
+  ],
+  "author": "Équipe de développement",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Cheeikh/ges-quincaillerie-E221/issues"
+  },
+  "homepage": "https://github.com/Cheeikh/ges-quincaillerie-E221#readme",
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.21.2",
+    "express-rate-limit": "^6.11.2",
+    "express-validator": "^7.0.1",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.0.3",
+    "multer": "^1.4.5-lts.1",
+    "swagger-jsdoc": "^6.2.8",
+    "swagger-ui-express": "^5.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  }
+}
