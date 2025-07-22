@@ -1,0 +1,493 @@
+const Commande = require('../models/Commande');
+const Produit = require('../models/Produit');
+const Fournisseur = require('../models/Fournisseur');
+const Paiement = require('../models/Paiement');
+const { validationResult } = require('express-validator');
+const { paginer, construireReponsePaginee, estAujourdhui } = require('../utils/helpers');
+
+// Créer une nouvelle commande
+const createCommande = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Erreurs de validation',
+        errors: errors.array()
+      });
+    }
+
+    const { fournisseur, articles, dateLivraisonPrevue } = req.body;
+
+    // Vérifier que le fournisseur existe
+    const fournisseurExist = await Fournisseur.findById(fournisseur);
+    if (!fournisseurExist || fournisseurExist.isArchived) {
+      return res.status(400).json({
+        success: false,
+        message: 'Fournisseur invalide ou archivé'
+      });
+    }
+
+    // Vérifier et calculer les articles
+    let montantTotal = 0;
+    const articlesAvecPrix = [];
+
+    for (const article of articles) {
+      const produit = await Produit.findById(article.produit);
+      if (!produit || produit.isArchived) {
+        return res.status(400).json({
+          success: false,
+          message: `Produit invalide ou archivé: ${article.produit}`
+        });
+      }
+
+      const sousTotal = article.quantite * article.prixAchat;
+      montantTotal += sousTotal;
+
+      articlesAvecPrix.push({
+        produit: article.produit,
+        quantite: article.quantite,
+        prixAchat: article.prixAchat,
+        sousTotal
+      });
+    }
+
+    // Créer la commande
+    const commande = new Commande({
+      fournisseur,
+      articles: articlesAvecPrix,
+      montant: montantTotal,
+      dateLivraisonPrevue,
+      responsableAchat: req.user._id
+    });
+
+    await commande.save();
+
+    // Peupler les données pour la réponse
+    await commande.populate([
+      { path: 'fournisseur', select: 'numero nom' },
+      { path: 'articles.produit', select: 'code designation' },
+      { path: 'responsableAchat', select: 'nom prenom' }
+    ]);
+
+    res.status(201).json({
+      success: true,
+      message: 'Commande créée avec succès',
+      data: {
+        commande
+      }
+    });
+  } catch (error) {
+    console.error('Erreur lors de la création de la commande:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur interne du serveur'
+    });
+  }
+};
+
+// Obtenir toutes les commandes avec filtres
+const getCommandes = async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 10, 
+      statut, 
+      fournisseur, 
+      dateDebut, 
+      dateFin,
+      responsableAchat 
+    } = req.query;
+    const { skip, limit: limitNum } = paginer(page, limit);
+
+    // Construire le filtre
+    const filter = {};
+    if (statut) filter.statut = statut;
+    if (fournisseur) filter.fournisseur = fournisseur;
+    if (responsableAchat && req.user.role === 'gestionnaire') {
+      filter.responsableAchat = responsableAchat;
+    } else if (req.user.role === 'responsable_achat') {
+      filter.responsableAchat = req.user._id;
+    }
+
+    if (dateDebut || dateFin) {
+      filter.date = {};
+      if (dateDebut) filter.date.$gte = new Date(dateDebut);
+      if (dateFin) filter.date.$lte = new Date(dateFin);
+    }
+
+    const [commandes, total] = await Promise.all([
+      Commande.find(filter)
+        .populate('fournisseur', 'numero nom')
+        .populate('articles.produit', 'code designation')
+        .populate('responsableAchat', 'nom prenom')
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum),
+      Commande.countDocuments(filter)
+    ]);
+
+    const response = construireReponsePaginee(commandes, total, page, limit);
+
+    res.json({
+      success: true,
+      message: 'Commandes récupérées avec succès',
+      ...response
+    });
+  } catch (error) {
+    console.error('Erreur lors de la récupération des commandes:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur interne du serveur'
+    });
+  }
+};
+
+// Obtenir une commande par ID
+const getCommandeById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const commande = await Commande.findById(id)
+      .populate('fournisseur')
+      .populate('articles.produit')
+      .populate('responsableAchat', 'nom prenom email');
+
+    if (!commande) {
+      return res.status(404).json({
+        success: false,
+        message: 'Commande non trouvée'
+      });
+    }
+
+    // Vérifier les permissions
+    if (req.user.role === 'responsable_achat' && 
+        commande.responsableAchat._id.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Accès refusé à cette commande'
+      });
+    }
+
+    // Récupérer l'historique des paiements
+    const paiements = await Paiement.find({ commande: id })
+      .populate('responsablePaiement', 'nom prenom')
+      .sort({ numeroVersement: 1 });
+
+    res.json({
+      success: true,
+      message: 'Commande récupérée avec succès',
+      data: {
+        commande: {
+          ...commande.toObject(),
+          paiements
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Erreur lors de la récupération de la commande:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur interne du serveur'
+    });
+  }
+};
+
+// Mettre à jour une commande (avant livraison)
+const updateCommande = async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Erreurs de validation',
+        errors: errors.array()
+      });
+    }
+
+    const { id } = req.params;
+    const { articles, dateLivraisonPrevue } = req.body;
+
+    const commande = await Commande.findById(id);
+    if (!commande) {
+      return res.status(404).json({
+        success: false,
+        message: 'Commande non trouvée'
+      });
+    }
+
+    // Vérifier les permissions
+    if (req.user.role === 'responsable_achat' && 
+        commande.responsableAchat.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Accès refusé à cette commande'
+      });
+    }
+
+    // Seules les commandes en cours peuvent être modifiées
+    if (commande.statut !== 'en_cours') {
+      return res.status(400).json({
+        success: false,
+        message: 'Seules les commandes en cours peuvent être modifiées'
+      });
+    }
+
+    // Recalculer le montant si les articles sont modifiés
+    if (articles) {
+      let montantTotal = 0;
+      const articlesAvecPrix = [];
+
+      for (const article of articles) {
+        const produit = await Produit.findById(article.produit);
+        if (!produit || produit.isArchived) {
+          return res.status(400).json({
+            success: false,
+            message: `Produit invalide ou archivé: ${article.produit}`
+          });
+        }
+
+        const sousTotal = article.quantite * article.prixAchat;
+        montantTotal += sousTotal;
+
+        articlesAvecPrix.push({
+          produit: article.produit,
+          quantite: article.quantite,
+          prixAchat: article.prixAchat,
+          sousTotal
+        });
+      }
+
+      commande.articles = articlesAvecPrix;
+      commande.montant = montantTotal;
+    }
+
+    if (dateLivraisonPrevue) {
+      commande.dateLivraisonPrevue = dateLivraisonPrevue;
+    }
+
+    await commande.save();
+
+    await commande.populate([
+      { path: 'fournisseur', select: 'numero nom' },
+      { path: 'articles.produit', select: 'code designation' },
+      { path: 'responsableAchat', select: 'nom prenom' }
+    ]);
+
+    res.json({
+      success: true,
+      message: 'Commande mise à jour avec succès',
+      data: {
+        commande
+      }
+    });
+  } catch (error) {
+    console.error('Erreur lors de la mise à jour de la commande:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur interne du serveur'
+    });
+  }
+};
+
+// Marquer une commande comme livrée
+const marquerLivree = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { dateLivraisonReelle } = req.body;
+
+    const commande = await Commande.findById(id);
+    if (!commande) {
+      return res.status(404).json({
+        success: false,
+        message: 'Commande non trouvée'
+      });
+    }
+
+    if (commande.statut !== 'en_cours') {
+      return res.status(400).json({
+        success: false,
+        message: 'Seules les commandes en cours peuvent être marquées comme livrées'
+      });
+    }
+
+    commande.statut = 'livre';
+    commande.dateLivraisonReelle = dateLivraisonReelle || new Date();
+
+    // Mettre à jour le stock des produits
+    for (const article of commande.articles) {
+      await Produit.findByIdAndUpdate(
+        article.produit,
+        { $inc: { quantiteStock: article.quantite } }
+      );
+    }
+
+    await commande.save();
+
+    res.json({
+      success: true,
+      message: 'Commande marquée comme livrée avec succès',
+      data: {
+        commande
+      }
+    });
+  } catch (error) {
+    console.error('Erreur lors du marquage de livraison:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur interne du serveur'
+    });
+  }
+};
+
+// Annuler une commande
+const annulerCommande = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { motif } = req.body;
+
+    const commande = await Commande.findById(id);
+    if (!commande) {
+      return res.status(404).json({
+        success: false,
+        message: 'Commande non trouvée'
+      });
+    }
+
+    // Vérifier les permissions
+    if (req.user.role === 'responsable_achat' && 
+        commande.responsableAchat.toString() !== req.user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Accès refusé à cette commande'
+      });
+    }
+
+    if (commande.statut === 'paye' || commande.statut === 'annule') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cette commande ne peut pas être annulée'
+      });
+    }
+
+    commande.statut = 'annule';
+    if (motif) {
+      commande.motifAnnulation = motif;
+    }
+
+    await commande.save();
+
+    res.json({
+      success: true,
+      message: 'Commande annulée avec succès',
+      data: {
+        commande
+      }
+    });
+  } catch (error) {
+    console.error('Erreur lors de l\'annulation de la commande:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur interne du serveur'
+    });
+  }
+};
+
+// Obtenir les statistiques des commandes
+const getStatistiques = async (req, res) => {
+  try {
+    const aujourdhui = new Date();
+    aujourdhui.setHours(0, 0, 0, 0);
+    const demain = new Date(aujourdhui);
+    demain.setDate(demain.getDate() + 1);
+
+    const [
+      commandesEnCours,
+      commandesALivrerAujourdhui,
+      detteTotal,
+      versementsAujourdhui
+    ] = await Promise.all([
+      // Commandes en cours
+      Commande.countDocuments({ statut: 'en_cours' }),
+      
+      // Commandes à livrer aujourd'hui
+      Commande.countDocuments({
+        dateLivraisonPrevue: {
+          $gte: aujourdhui,
+          $lt: demain
+        },
+        statut: 'en_cours'
+      }),
+      
+      // Dette totale (commandes livrées non entièrement payées)
+      Commande.aggregate([
+        { $match: { statut: { $in: ['livre', 'paye'] } } },
+        {
+          $lookup: {
+            from: 'paiements',
+            localField: '_id',
+            foreignField: 'commande',
+            as: 'paiements'
+          }
+        },
+        {
+          $addFields: {
+            montantPaye: { $sum: '$paiements.montant' },
+            reste: { $subtract: ['$montant', { $sum: '$paiements.montant' }] }
+          }
+        },
+        { $match: { reste: { $gt: 0 } } },
+        { $group: { _id: null, detteTotal: { $sum: '$reste' } } }
+      ]),
+      
+      // Versements d'aujourd'hui
+      Paiement.aggregate([
+        {
+          $match: {
+            date: {
+              $gte: aujourdhui,
+              $lt: demain
+            }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            nombreVersements: { $sum: 1 },
+            montantTotal: { $sum: '$montant' }
+          }
+        }
+      ])
+    ]);
+
+    res.json({
+      success: true,
+      message: 'Statistiques récupérées avec succès',
+      data: {
+        commandesEnCours,
+        commandesALivrerAujourdhui,
+        detteTotal: detteTotal[0]?.detteTotal || 0,
+        versementsAujourdhui: {
+          nombre: versementsAujourdhui[0]?.nombreVersements || 0,
+          montant: versementsAujourdhui[0]?.montantTotal || 0
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Erreur lors de la récupération des statistiques:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Erreur interne du serveur'
+    });
+  }
+};
+
+module.exports = {
+  createCommande,
+  getCommandes,
+  getCommandeById,
+  updateCommande,
+  marquerLivree,
+  annulerCommande,
+  getStatistiques
+};
