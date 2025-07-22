@@ -8,6 +8,14 @@ require('dotenv').config();
 const { connectDB } = require('./config/database');
 const { swaggerUi, specs } = require('./config/swagger');
 const routes = require('./routes');
+const {
+  handleValidationErrors,
+  handleExpressValidationErrors,
+  handlePrismaErrors,
+  handleJWTErrors,
+  handleGeneralErrors,
+  handleNotFound
+} = require('./middleware/errorHandler');
 
 const app = express();
 
@@ -65,25 +73,17 @@ app.get('/', (req, res) => {
   });
 });
 
-// Middleware de gestion des erreurs 404
-app.use('*', (req, res) => {
-  res.status(404).json({
-    success: false,
-    message: 'Route non trouvée',
-    path: req.originalUrl
-  });
-});
+// Middlewares de gestion d'erreurs (dans l'ordre d'exécution)
+app.use(handleExpressValidationErrors);
+app.use(handleValidationErrors);
+app.use(handlePrismaErrors);
+app.use(handleJWTErrors);
 
-// Middleware de gestion globale des erreurs
-app.use((error, req, res, next) => {
-  console.error('Erreur globale:', error);
-  
-  res.status(error.status || 500).json({
-    success: false,
-    message: error.message || 'Erreur interne du serveur',
-    ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
-  });
-});
+// Middleware de gestion des routes non trouvées
+app.use('*', handleNotFound);
+
+// Middleware de gestion globale des erreurs (doit être en dernier)
+app.use(handleGeneralErrors);
 
 const PORT = process.env.PORT || 3000;
 

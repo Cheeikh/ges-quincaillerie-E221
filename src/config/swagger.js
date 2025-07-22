@@ -34,7 +34,10 @@ const options = {
       }
     ]
   },
-  apis: ['./src/routes/*.js'], // Chemins vers les fichiers contenant les définitions OpenAPI
+  apis: [
+    './src/config/swagger-docs.js',
+    './src/routes/*.js'
+  ], // Chemins vers les fichiers contenant les définitions OpenAPI
 };
 
 const specs = swaggerJsdoc(options);

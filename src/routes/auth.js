@@ -103,6 +103,21 @@ const router = express.Router();
  *                       $ref: '#/components/schemas/User'
  *                     token:
  *                       type: string
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ *       409:
+ *         description: Email déjà utilisé
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 message:
+ *                   type: string
+ *                   example: 'Cet email est déjà utilisé'
  */
 router.post('/register', [
   body('email').isEmail().withMessage('Email invalide'),
@@ -136,8 +151,39 @@ router.post('/register', [
  *     responses:
  *       200:
  *         description: Connexion réussie
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: 'Connexion réussie'
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     user:
+ *                       $ref: '#/components/schemas/User'
+ *                     token:
+ *                       type: string
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
  *       401:
  *         description: Identifiants incorrects
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 message:
+ *                   type: string
+ *                   example: 'Email ou mot de passe incorrect'
  */
 router.post('/login', [
   body('email').isEmail().withMessage('Email invalide'),
@@ -155,6 +201,18 @@ router.post('/login', [
  *     responses:
  *       200:
  *         description: Profil récupéré avec succès
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   $ref: '#/components/schemas/User'
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
  */
 router.get('/profile', authenticate, getProfile);
 
@@ -183,6 +241,36 @@ router.get('/profile', authenticate, getProfile);
  *     responses:
  *       200:
  *         description: Profil mis à jour avec succès
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: 'Profil mis à jour avec succès'
+ *                 data:
+ *                   $ref: '#/components/schemas/User'
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ *       409:
+ *         description: Email déjà utilisé
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 message:
+ *                   type: string
+ *                   example: 'Cet email est déjà utilisé'
  */
 router.put('/profile', authenticate, [
   body('nom').optional().notEmpty().withMessage('Le nom ne peut pas être vide'),
@@ -216,6 +304,34 @@ router.put('/profile', authenticate, [
  *     responses:
  *       200:
  *         description: Mot de passe changé avec succès
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: 'Mot de passe changé avec succès'
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ *       403:
+ *         description: Mot de passe actuel incorrect
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: false
+ *                 message:
+ *                   type: string
+ *                   example: 'Mot de passe actuel incorrect'
  */
 router.put('/change-password', authenticate, [
   body('currentPassword').notEmpty().withMessage('Le mot de passe actuel est requis'),

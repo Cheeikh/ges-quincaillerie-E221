@@ -105,6 +105,25 @@ const router = express.Router();
  *     responses:
  *       201:
  *         description: Commande créée avec succès
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: 'Commande créée avec succès'
+ *                 data:
+ *                   $ref: '#/components/schemas/Commande'
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ *       401:
+ *         $ref: '#/components/responses/UnauthorizedError'
+ *       403:
+ *         $ref: '#/components/responses/ForbiddenError'
  */
 router.post('/', authenticate, isResponsableAchat, [
   body('fournisseur').isMongoId().withMessage('ID fournisseur invalide'),
